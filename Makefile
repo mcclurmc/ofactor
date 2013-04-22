@@ -1,10 +1,19 @@
+BINARY=dist/build/ofactor/ofactor.byte
 
-all: obuild-build
+all: $(BINARY)
 
-.PHONY: obuild-config obuild-build
+.PHONY: run clean
 
-obuild-config:
-	obuild --verbose configure --enable-executable-bytecode --disable-executable-native
+dist: ofactor.obuild
+	obuild --verbose configure --enable-executable-bytecode
 
-obuild-build: obuild-config
+$(BINARY): dist
 	obuild --debug+ build
+	cp dist/build/ofactor/*.cmt src/
+
+run: dist/build/ofactor/ofactor.byte
+	./dist/build/ofactor/ofactor.byte
+
+clean:
+	obuild clean
+	rm -f src/*.cmt
