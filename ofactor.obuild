@@ -1,0 +1,9 @@
+name: ofactor
+version: 0.0.1
+synopsis: Refactoring tool for OCaml
+obuild-ver: 1
+
+executable ofactor
+  main: ofactor.ml
+  src-dir: src
+  build-deps: compiler-libs
