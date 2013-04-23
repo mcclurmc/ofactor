@@ -1,13 +1,17 @@
 BINARY=dist/build/ofactor/ofactor.byte
+SRC=src/*.ml
 
+.DEFAULT: all
 all: $(BINARY)
 
-.PHONY: run clean
+.PHONY: run clean configure
 
-dist: ofactor.obuild
+configure: dist/setup
+
+dist/setup: ofactor.obuild
 	obuild --verbose configure --enable-executable-bytecode
 
-$(BINARY): dist
+$(BINARY): dist/setup $(SRC)
 	obuild --debug+ build
 	cp dist/build/ofactor/*.cmt src/
 
