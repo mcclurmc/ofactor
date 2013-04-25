@@ -9,10 +9,11 @@ all: $(BINARY)
 configure: dist/setup
 
 dist/setup: ofactor.obuild
-	obuild --verbose configure --enable-executable-bytecode
+	obuild --verbose configure --enable-executable-bytecode --enable-executable-debugging
 
 $(BINARY): dist/setup $(SRC)
-	obuild --debug+ build
+#obuild --debug+ build
+	obuild build
 	cp dist/build/ofactor/*.cmt src/
 
 run: dist/build/ofactor/ofactor.byte
