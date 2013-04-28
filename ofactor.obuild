@@ -6,4 +6,4 @@ obuild-ver: 1
 executable ofactor
   main: ofactor.ml
   src-dir: src
-  build-deps: compiler-libs.optcomp, compiler-libs.bytecomp
+  build-deps: compiler-libs.optcomp, compiler-libs.bytecomp, oUnit
