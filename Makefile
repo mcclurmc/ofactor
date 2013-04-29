@@ -16,7 +16,7 @@ $(BINARY): dist/setup $(SRC)
 	obuild build
 	cp dist/build/ofactor/*.cmt src/
 
-run: dist/build/ofactor/ofactor.byte
+test: dist/build/ofactor/ofactor.byte
 	./dist/build/ofactor/ofactor.byte
 
 clean:

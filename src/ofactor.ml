@@ -2,8 +2,6 @@
 open Asttypes
 open Parsetree
 
-open OUnit
-
 external (|>) : 'a -> ('a -> 'b) -> 'b = "%revapply"
 
 (* main driver needs to use commandliner to get source file name and
@@ -35,6 +33,7 @@ let find_loc_exp loc e =
 	let open Lexing in
 	()
 
+(* XXX See ocamlbrowser's searchid.ml for inspiration *)
 let ast_at_loc loc =
 	let pt = loc.Location.loc_start.Lexing.pos_fname
 		|> open_in
@@ -62,20 +61,21 @@ let flatmap f l = List.(flatten (map f l))
 let mapfst ls = List.map fst ls
 let mapsnd ls = List.map snd ls
 
-let mkvar s = Longident.Lident s
-
 let optmap f = function
 	| None -> []
 	| Some a -> f a
 
-let uniq ls =
-	let rec loop acc = function
-		| [] -> acc
-		| (h::t) ->
-			if List.mem h acc
-			then loop acc t
-			else loop (h::acc) t
-	in loop [] ls |> List.rev
+let uniq ?(cmp=compare) ls =
+	List.(fold_left
+		begin
+			fun acc item -> match acc with
+			| [] -> [item]
+			| first :: rest when first = item -> acc
+			| _ -> item :: acc
+		end
+		[] (sort cmp ls))
+
+let mkvar s = Longident.Lident s
 
 let rec pvars p = match p.ppat_desc with
 	| Ppat_any
@@ -161,7 +161,7 @@ and fv_case c = ((optmap fv c.pc_guard) @ (fv c.pc_rhs)) // (pvars c.pc_lhs)
 
 and fv_mod s = failwith "fv_mod unimplemented"
 
-let fv e = fv e |> uniq
+let fv e = fv e |> uniq ~cmp:cmp_lident
 
 (* TODO: bound variables. Eventually, we'll need to know the variables
 	 bound in the scope _between_: (1) the level to which we're
@@ -197,6 +197,8 @@ and bv_exp es e_stop acc =
 			| Pexp_let _ -> bv_exp es e_stop acc
 			| Pexp_function _ -> bv_exp es e_stop acc
 
+let bv s e = bv s e [] |> uniq ~cmp:cmp_lident
+
 (* Tests *)
 
 let unwrap_str_eval = function
@@ -213,6 +215,8 @@ let parse_str s = s
 let print_idents is =
 	let is = List.map Longident.last is in
 	print_endline (String.concat ", " is)
+
+open OUnit
 
 module EVar = struct
 	type t = Longident.t
@@ -236,19 +240,16 @@ let mktest s vs () =
 			 (List.length fvs)
 			 (List.map Longident.last fvs |> String.concat ", "));
 
-	ListVar.assert_equal vs fvs ;
-
 	let fvs = SetVar.of_list fvs in
 	let vs = SetVar.of_list vs in
 	SetVar.assert_equal vs fvs
 
 let mktest s vs = s >:: (mktest s vs)
 
-let suite = "ofactor" >:::
-	[ mktest "function | x -> x" []
+let fv_suite = "ofactor" >:::
+	[ mktest "function x -> x" []
 	; mktest "function x -> y" ["y"]
-  ; mktest "function | x -> x" []
-	; mktest "function x -> y" ["y"]
+	; mktest "function x -> y | z -> z" ["y"]
 	; mktest "function x -> x z" ["z"]
 	; mktest "for i = 0 to 10 do print_endline \"foo\" i x done" ["print_endline"; "x"]
 	; mktest "let rec f a = b and g a = f a in f g a " ["b"; "a"]
@@ -265,4 +266,4 @@ let suite = "ofactor" >:::
 	; mktest "(x : int)" ["x"]
 	]
 
-let _ = run_test_tt_main suite
+let _ = run_test_tt_main fv_suite
