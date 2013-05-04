@@ -299,7 +299,7 @@ let unwrap_str_eval = function
 		; pstr_loc = _ } -> e
 	| _ -> failwith "unwrap_str_eval"
 
-let parse_str s = s
+let parse_string s = s
 	|> Lexing.from_string
 	|> Parse.implementation
 	|> List.hd
@@ -324,7 +324,7 @@ module ListVar = OUnitDiff.ListSimpleMake(EVar)
 let debug = ref false
 
 let mktest s vs () =
-	let p = parse_str s in
+	let p = parse_string s in
 	let fvs = fv_exp p in
 	let vs = List.map mkvar vs in
 
