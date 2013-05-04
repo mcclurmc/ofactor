@@ -28,9 +28,6 @@ let string_of_loc loc =
 
 let print_loc loc =
 	print_endline (string_of_loc loc)
-	(* Printf.printf "%s to %s\n" *)
-	(* 	(string_of_pos loc.Location.loc_start) *)
-	(* 	(string_of_pos loc.Location.loc_end) *)
 
 let cmp_loc l1 l2 =
 	let open Lexing in
@@ -112,7 +109,7 @@ let rec pvars p = match p.ppat_desc with
 
 let pevars (p,_) = pvars p
 
-let rec fv e =
+let rec fv_exp e =
 	match e.pexp_desc with
 	| Pexp_object _
 	| Pexp_pack _
@@ -125,9 +122,9 @@ let rec fv e =
 
 	| Pexp_array es
 	| Pexp_tuple es ->
-		flatmap fv es
+		flatmap fv_exp es
 
-	| Pexp_constraint (e, _)  (* TODO: implement types as fv *)
+	| Pexp_constraint (e, _)  (* TODO: implement types as fv_exp *)
 	| Pexp_assert e
 	| Pexp_lazy e
 	| Pexp_poly (e, _)
@@ -136,59 +133,59 @@ let rec fv e =
 	| Pexp_setinstvar (_, e)
 	| Pexp_newtype (_, e)
 	| Pexp_field (e, _) ->
-		fv e
+		fv_exp e
 
 	| Pexp_variant (_, e)
 	| Pexp_construct (_, e) ->
-		optmap fv e
+		optmap fv_exp e
 
 	| Pexp_apply (e, les) ->
-		(fv e) @ (flatmap fv (mapsnd les))
+		(fv_exp e) @ (flatmap fv_exp (mapsnd les))
 	| Pexp_record (les, e) ->
-		(optmap fv e) @ (flatmap fv (mapsnd les))
+		(optmap fv_exp e) @ (flatmap fv_exp (mapsnd les))
 
 	| Pexp_sequence (e1, e2)
 	| Pexp_while (e1, e2)
 	| Pexp_setfield (e1, _, e2) ->
-		(fv e1) @ (fv e2)
+		(fv_exp e1) @ (fv_exp e2)
 
-	| Pexp_ifthenelse (e1, e2, e3) -> (fv e1) @ (fv e2) @ (optmap fv e3)
+	| Pexp_ifthenelse (e1, e2, e3) -> (fv_exp e1) @ (fv_exp e2) @ (optmap fv_exp e3)
 
-	| Pexp_override es -> flatmap fv (mapsnd es) (* ??? *)
+	| Pexp_override es -> flatmap fv_exp (mapsnd es) (* ??? *)
 
-	| Pexp_letmodule (_, m, e) -> (fv e) @ (fv_mod m)
+	| Pexp_letmodule (_, m, e) -> (fv_exp e) @ (fv_mod m)
 
 	(* Binding cases *)
 	| Pexp_match (e, cs)
 	| Pexp_try (e, cs) ->
-		(fv e) @ (flatmap fv_case cs)
+		(fv_exp e) @ (flatmap fv_case cs)
 
 	| Pexp_for (i, e1, e2, _, e3) ->
-		(fv e1) @ (fv e2) @
-			((fv e3) // [ mkvar i.txt ])
+		(fv_exp e1) @ (fv_exp e2) @
+			((fv_exp e3) // [ mkvar i.txt ])
 
 	| Pexp_let (Nonrecursive, pe, e) ->
 		(flatmap fv_pat pe) @
-			((fv e) // (flatmap pevars pe))
+			((fv_exp e) // (flatmap pevars pe))
 	| Pexp_let (Recursive, pe, e) ->
 		((flatmap fv_pat pe) // (flatmap pevars pe)) @
-			((fv e) // (flatmap pevars pe))
+			((fv_exp e) // (flatmap pevars pe))
 	| Pexp_function cs ->
 		flatmap fv_case cs
 
 	| Pexp_fun (_, e0, p, e1) -> (* TODO: labels *)
-		(optmap fv e0) @ ((fv e1) // (pvars p))
+		(optmap fv_exp e0) @ ((fv_exp e1) // (pvars p))
 
 	| Pexp_coerce (_, _, _)
 	| Pexp_extension _ -> print_endline "unimplemented"; []
 
-and fv_pat (p,e) = (fv e) // (pvars p)
+and fv_pat (p,e) = (fv_exp e) // (pvars p)
 
-and fv_case c = ((optmap fv c.pc_guard) @ (fv c.pc_rhs)) // (pvars c.pc_lhs)
+and fv_case c = ((optmap fv_exp c.pc_guard) @ (fv_exp c.pc_rhs)) // (pvars c.pc_lhs)
 
-and fv_mod s = failwith "fv_mod unimplemented"
+and fv_mod s = failwith "fv_mod unimplemented" (* TODO: implement *)
 
-let fv e = fv e |> uniq ~cmp:cmp_lident
+let fv_exp e = fv_exp e |> uniq ~cmp:cmp_lident
 
 (* TODO: bound variables. Eventually, we'll need to know the variables
 	 bound in the scope _between_: (1) the level to which we're
@@ -226,6 +223,75 @@ and bv_exp es e_stop acc =
 
 let bv s e = bv s e [] |> uniq ~cmp:cmp_lident
 
+let string_of_fv_list fvs =
+	List.map Longident.last fvs |> String.concat ", "
+
+let search_mapper(pos1, pos2) =
+object(this)
+
+	inherit Ast_mapper.mapper as super
+
+	val mutable exp = None
+	val mutable str = None
+
+	method get_exp = exp
+	method get_str = str
+
+	method! expr e =
+		if range_in_loc pos1 pos2 e.pexp_loc
+		then begin
+			Printf.printf "found an expression at %s"
+				(string_of_loc e.pexp_loc);
+			exp <- Some e ;
+			let fvs = fv_exp e in
+			Printf.printf "  free vars: %s\n" (string_of_fv_list fvs) ;
+			e
+		end
+		else super # expr e
+
+	method! structure_item si =
+		if pos_in_loc pos1 si.pstr_loc
+		then begin
+			Printf.printf "found a structure item at %s"
+				(string_of_loc si.pstr_loc);
+			str <- Some si ;
+			super # structure_item si
+		end
+		else super # structure_item si
+
+	method! structure sis =
+		List.filter
+			(fun s -> range_in_loc pos1 pos2 s.pstr_loc)
+			sis
+		|> super # structure
+
+end
+
+let ast_of_file fn =
+	open_in fn
+	|> Lexing.from_channel
+	|> Parse.implementation
+
+let mkpos l b c =
+	let open Lexing in
+	{ pos_fname = "dummy"
+	; pos_lnum = l
+	; pos_bol = b
+	; pos_cnum = c }
+
+let _ =
+	let pos1 = mkpos 20 0 3 in
+	let pos2 = mkpos 22 0 39 in
+	let m = search_mapper(pos1, pos2) in
+	print_endline "running search_mapper" ;
+	let ast = ast_of_file "src/ofactor.ml" in
+	m # implementation "" ast |> ignore ;
+	match m # get_exp with
+	| None -> print_endline "failed to retrieve expression"
+	| Some e ->
+		Printf.printf "retrieved expression at: %s"
+			(string_of_loc e.pexp_loc)
+
 (* Tests *)
 
 let unwrap_str_eval = function
@@ -257,19 +323,15 @@ module ListVar = OUnitDiff.ListSimpleMake(EVar)
 
 let debug = ref false
 
-let string_of_fv_list fvs =
-	List.map Longident.last fvs |> String.concat ", "
-
 let mktest s vs () =
 	let p = parse_str s in
-	let fvs = fv p in
+	let fvs = fv_exp p in
 	let vs = List.map mkvar vs in
 
 	if !debug then
 		(Printf.printf "\n[%s] len: %d, free vars: %s - Pass? " s
 			 (List.length fvs)
 			 (string_of_fv_list fvs));
-			 (* (List.map Longident.last fvs |> String.concat ", ")); *)
 
 	let fvs = SetVar.of_list fvs in
 	let vs = SetVar.of_list vs in
@@ -297,64 +359,3 @@ let fv_suite = "ofactor" >:::
 	; mktest "(x : int)" ["x"] ]
 
 let _ = run_test_tt_main fv_suite ; print_endline ""
-
-let search_mapper(pos1, pos2) =
-object(this)
-
-	inherit Ast_mapper.mapper as super
-
-	val mutable exp = None
-	val mutable str = None
-
-	method get_exp = exp
-	method get_str = str
-
-	method! expr e =
-		if range_in_loc pos1 pos2 e.pexp_loc
-		then begin
-			Printf.printf "found an expression at %s"
-				(string_of_loc e.pexp_loc);
-			exp <- Some e ;
-			let fvs = fv e in
-			Printf.printf "  free vars: %s\n" (string_of_fv_list fvs) ;
-			super # expr e
-		end
-		else super # expr e
-
-	method! structure_item si =
-		if pos_in_loc pos1 si.pstr_loc
-		then begin
-			Printf.printf "found a structure item at %s"
-				(string_of_loc si.pstr_loc);
-			str <- Some si ;
-			super # structure_item si
-		end
-		else super # structure_item si
-
-end
-
-let ast_of_file fn =
-	open_in fn
-	|> Lexing.from_channel
-	|> Parse.implementation
-
-let mkpos l b c =
-	let open Lexing in
-	{ pos_fname = "dummy"
-	; pos_lnum = l
-	; pos_bol = b
-	; pos_cnum = c }
-
-let _ =
-	let pos1 = mkpos 26 0 3 in
-	let pos2 = mkpos 26 0 39 in
-	let m = search_mapper(pos1, pos2) in
-	print_endline "running search_mapper" ;
-	let fn = "src/ofactor.ml" in
-	let ast = ast_of_file fn in
-	let e = m # implementation "" ast in
-	match m # get_exp with
-	| None -> print_endline "failed to retrieve expression"
-	| Some e ->
-		Printf.printf "retrieved expression at: %s"
-			(string_of_loc e.pexp_loc)
