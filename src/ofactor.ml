@@ -2,6 +2,9 @@
 open Asttypes
 open Parsetree
 
+open Ast_helper
+open Ast_mapper
+
 external (|>) : 'a -> ('a -> 'b) -> 'b = "%revapply"
 
 (* main driver needs to use commandliner to get source file name and
@@ -13,21 +16,45 @@ let main = ()
 (* given a source file, and a location, can we find the AST node that
 	 occurs nearest to, but not after, this location? *)
 
-let string_of_loc (loc : Lexing.position) =
+let string_of_pos (pos : Lexing.position) =
 	Printf.sprintf "l%dc%d"
-		loc.Lexing.pos_lnum
-		loc.Lexing.pos_cnum
+		pos.Lexing.pos_lnum
+		(pos.Lexing.pos_cnum - pos.Lexing.pos_bol)
+
+let string_of_loc loc =
+	Printf.sprintf "%s to %s\n"
+		(string_of_pos loc.Location.loc_start)
+		(string_of_pos loc.Location.loc_end)
 
 let print_loc loc =
-	Printf.printf "%s to %s\n"
-		(string_of_loc loc.Location.loc_start)
-		(string_of_loc loc.Location.loc_start)
+	print_endline (string_of_loc loc)
+	(* Printf.printf "%s to %s\n" *)
+	(* 	(string_of_pos loc.Location.loc_start) *)
+	(* 	(string_of_pos loc.Location.loc_end) *)
 
 let cmp_loc l1 l2 =
 	let open Lexing in
 	let c1 = compare l1.pos_lnum l2.pos_lnum
 	and c2 = compare l1.pos_cnum l2.pos_cnum in
 	if c1 = 0 then c2 else c1
+
+let pos_in_loc p l =
+	let open Lexing in
+	let open Location in
+
+	let l1 = l.loc_start
+	and l2 = l.loc_end in
+
+	(p.pos_lnum >= l1.pos_lnum && p.pos_lnum <= l2.pos_lnum)
+	&&
+		(p.pos_cnum >= (l1.pos_cnum - l1.pos_bol)
+		 && p.pos_cnum <= (l2.pos_cnum - l2.pos_bol))
+
+let range_in_loc p1 p2 l =
+	(pos_in_loc p1 l) && (pos_in_loc p2 l)
+
+let search_exp exp loc =
+	()
 
 let find_loc_exp loc e =
 	let open Lexing in
@@ -230,6 +257,9 @@ module ListVar = OUnitDiff.ListSimpleMake(EVar)
 
 let debug = ref false
 
+let string_of_fv_list fvs =
+	List.map Longident.last fvs |> String.concat ", "
+
 let mktest s vs () =
 	let p = parse_str s in
 	let fvs = fv p in
@@ -238,7 +268,8 @@ let mktest s vs () =
 	if !debug then
 		(Printf.printf "\n[%s] len: %d, free vars: %s - Pass? " s
 			 (List.length fvs)
-			 (List.map Longident.last fvs |> String.concat ", "));
+			 (string_of_fv_list fvs));
+			 (* (List.map Longident.last fvs |> String.concat ", ")); *)
 
 	let fvs = SetVar.of_list fvs in
 	let vs = SetVar.of_list vs in
@@ -263,7 +294,67 @@ let fv_suite = "ofactor" >:::
 	; mktest "if true then a else b" ["a"; "b"]
 	; mktest "if true then a else match z with | x -> y | x -> x" ["a"; "z"; "y"]
 	; mktest "match z with | x -> y | x -> if x then z else y" ["z"; "y"]
-	; mktest "(x : int)" ["x"]
-	]
+	; mktest "(x : int)" ["x"] ]
 
-let _ = run_test_tt_main fv_suite
+let _ = run_test_tt_main fv_suite ; print_endline ""
+
+let search_mapper(pos1, pos2) =
+object(this)
+
+	inherit Ast_mapper.mapper as super
+
+	val mutable exp = None
+	val mutable str = None
+
+	method get_exp = exp
+	method get_str = str
+
+	method! expr e =
+		if range_in_loc pos1 pos2 e.pexp_loc
+		then begin
+			Printf.printf "found an expression at %s"
+				(string_of_loc e.pexp_loc);
+			exp <- Some e ;
+			let fvs = fv e in
+			Printf.printf "  free vars: %s\n" (string_of_fv_list fvs) ;
+			super # expr e
+		end
+		else super # expr e
+
+	method! structure_item si =
+		if pos_in_loc pos1 si.pstr_loc
+		then begin
+			Printf.printf "found a structure item at %s"
+				(string_of_loc si.pstr_loc);
+			str <- Some si ;
+			super # structure_item si
+		end
+		else super # structure_item si
+
+end
+
+let ast_of_file fn =
+	open_in fn
+	|> Lexing.from_channel
+	|> Parse.implementation
+
+let mkpos l b c =
+	let open Lexing in
+	{ pos_fname = "dummy"
+	; pos_lnum = l
+	; pos_bol = b
+	; pos_cnum = c }
+
+let _ =
+	let pos1 = mkpos 26 0 3 in
+	let pos2 = mkpos 26 0 39 in
+	let m = search_mapper(pos1, pos2) in
+	print_endline "running search_mapper" ;
+	let fn = "src/ofactor.ml" in
+	let ast = ast_of_file fn in
+	let e = m # implementation "" ast in
+	match m # get_exp with
+	| None -> print_endline "failed to retrieve expression"
+	| Some e ->
+		Printf.printf "retrieved expression at: %s"
+			(string_of_loc e.pexp_loc)
