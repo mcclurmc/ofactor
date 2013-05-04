@@ -2,7 +2,6 @@
 open Asttypes
 open Parsetree
 
-open Ast_helper
 open Ast_mapper
 
 external (|>) : 'a -> ('a -> 'b) -> 'b = "%revapply"
