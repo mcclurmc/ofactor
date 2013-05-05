@@ -17,7 +17,7 @@ $(BINARY): dist/setup $(SRC)
 	cp dist/build/ofactor/*.cmt src/
 
 test: dist/build/ofactor/ofactor.byte
-	./dist/build/ofactor/ofactor.byte
+	ocamlrun -b dist/build/ofactor/ofactor.d.byte
 
 clean:
 	obuild clean
