@@ -1,10 +1,13 @@
 BINARY=dist/build/ofactor/ofactor.byte
 SRC=src/*.ml
 
+OCAMLDEBUG=ledit ocamldebug
+COMPILER_LIBS=$(shell ocamlfind query compiler-libs)
+
 .DEFAULT: all
 all: $(BINARY)
 
-.PHONY: run clean configure
+.PHONY: test debug clean configure
 
 configure: dist/setup
 
@@ -16,8 +19,11 @@ $(BINARY): dist/setup $(SRC)
 	obuild build
 	cp dist/build/ofactor/*.cmt src/
 
-test: dist/build/ofactor/ofactor.byte
-	ocamlrun -b dist/build/ofactor/ofactor.d.byte
+test: dist/build/ofactor/ofactor.d.byte
+	ocamlrun -b $^
+
+debug: dist/build/ofactor/ofactor.d.byte
+	$(OCAMLDEBUG) -I $(COMPILER_LIBS) $^
 
 clean:
 	obuild clean
