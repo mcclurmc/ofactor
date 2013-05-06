@@ -6,7 +6,7 @@ let f a b =
 		| true -> a + d
 		| false -> b + d in
 	let rec h e f =
-		e + f in
+		e + f + b in
 	g true (h a b)
 
 let string_of_pos (pos : Lexing.position) =

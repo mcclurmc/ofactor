@@ -129,17 +129,7 @@ and fv_me s = [] (* TODO: implement *)
 
 let fv_exp e = fv_exp e |> uniq ~cmp:cmp_lident
 
-let choose_one_patt_exp pos pes =
-	let pe = List.filter
-		(fun (_,e) ->
-			pos_in_loc pos e.pexp_loc)
-		pes in
-	let pe = match pe with
-		| [pe] -> pe
-		| _ -> failwith "choose_one_patt_exp: range does not specify an expression"
-	in pe
-
-and choose_one_case pos cs =
+let choose_one_case pos cs =
 	let is_in_guard c = match c.pc_guard with
 		| None -> false
 		| Some e -> pos_in_loc pos e.pexp_loc in
@@ -147,41 +137,34 @@ and choose_one_case pos cs =
 		(fun c ->
 			is_in_guard c || pos_in_loc pos c.pc_rhs.pexp_loc)
 		cs in
-	let c = match c with
-		| [c] -> c
-		| _ -> failwith "choose_one_case: range does not specify an expression"
-	in if is_in_guard c then `guard c else `rhs c
+	match c with
+		| [c] ->
+			if is_in_guard c
+			then `guard c
+			else `rhs c
+		| _ ->
+			failwith "choose_one_case: range does not specify an expression"
 
 and choose_one_exp pos es =
 	let es = List.filter (pos_in_exp pos) es in
-	let e = match es with
+	match es with
 		| [e] -> e
-		| _ -> failwith "choose_one_exp: range does not specify an expression"
-	in e
+		| _ ->
+			failwith "choose_one_exp: range does not specify an expression"
 
-(* TODO: bound variables. Eventually, we'll need to know the variables
-	 bound in the scope _between_: (1) the level to which we're
-	 extracting the new function, and (2), the level at which the
-	 expression we're extracting has been defined. *)
 let rec bv_str str upto bound_vars = match str.pstr_desc with
 	| Pstr_value (rec_flag, pes, _) ->
 		let pos_upto = upto.pexp_loc.Location.loc_start in
-		let _,e = choose_one_patt_exp pos_upto pes in
-		let bvars = match rec_flag with
-			| Recursive    -> flatmap pevars pes
-			| Nonrecursive -> [] in
-		bv_exp e upto (bvars @ bound_vars)
+		let e = choose_one_exp pos_upto (mapsnd pes) in
+			let bvars = match rec_flag with
+				| Recursive    -> flatmap pevars pes
+				| Nonrecursive -> [] in
+			bv_exp e upto (bvars @ bound_vars)
 	| _ -> bound_vars
 
 and bv_exp e upto bound_vars =
-	(* TODO: Only return bound_vars if we've reached the expression
-		 we're targetting. Otherwise, we might have run down a branch
-		 which we don't care about. Consider looking for the variables
-		 bound at a particular match case expression: we would only want
-		 the variables bound up to that point, and not those bound on
-		 other branches. *)
-	let pos_upto = upto.pexp_loc.Location.loc_start in
 	if e = upto then bound_vars else
+		let pos_upto = upto.pexp_loc.Location.loc_start in
 		match e.pexp_desc with
 
 		(* Terminal cases *)
@@ -201,11 +184,12 @@ and bv_exp e upto bound_vars =
 			bv_exp e upto (pvars p @ l @ bound_vars)
 
 		| Pexp_let (rec_flag, pes, e) ->
-			let _,e = choose_one_patt_exp pos_upto pes in
 			let bvars = match rec_flag with
 				| Recursive -> flatmap pevars pes
 				| Nonrecursive -> [] in
-			bv_exp e upto (bvars @ bound_vars)
+			let es = e :: mapsnd pes in
+			let e = choose_one_exp pos_upto es in
+				bv_exp e upto (bvars @ bound_vars)
 
 		| Pexp_function cs ->
 			(match choose_one_case pos_upto cs with
@@ -217,7 +201,7 @@ and bv_exp e upto bound_vars =
 		| Pexp_apply (e, les) ->
 			let es = e :: mapsnd les in
 			let e = choose_one_exp pos_upto es in
-			bv_exp e upto bound_vars
+				bv_exp e upto bound_vars
 
 		(* TODO: other cases *)
 
@@ -249,8 +233,6 @@ and bv_exp e upto bound_vars =
 		| Pexp_open (_, _)
 		| Pexp_extension _ ->
 			failwith "bv_exp: unimplemented case"
-
-(* let bv_str s e = bv_str s e [] |> uniq ~cmp:cmp_lident *)
 
 (** AST searching *)
 
@@ -367,6 +349,7 @@ let do_test fn (l1,c1) (l2,c2) =
 
 let _ =
 	do_test "test/parsing.ml" (6,11) (6,16) ;
+	do_test "test/parsing.ml" (9,2)  (9,11) ;
 	do_test "test/parsing.ml" (13,1) (15,44) ;
 	do_test "test/parsing.ml" (15,5) (15,44) ;
 	do_test "test/parsing.ml" (15,5) (15,22) ;
@@ -425,4 +408,33 @@ let fv_suite = "ofactor" >:::
          (pos.Lexing.pos_cnum - pos.Lexing.pos_bol)"
 		["pos"; "sprintf"; "-"] ]
 
-let _ = run_test_tt_main fv_suite
+let mktest fn (l1,c1) (l2,c2) expected () =
+	let p1 = mkpos l1 c1
+	and p2 = mkpos l2 c2 in
+	let m = search_mapper(p1, p2) in
+	let ast = ast_of_file fn in
+	m # implementation "" ast |> ignore ;
+	let fvs = m # get_free_vars in
+
+	if !verbose then
+		(Printf.printf "\n  free vars: %s - Pass? "
+			 (string_of_idents fvs));
+
+	let fvs = SetVar.of_list fvs
+	and expected = SetVar.of_list expected in
+	SetVar.assert_equal expected fvs
+
+let mktest fn (l1,c1) (l2,c2) expected =
+	(Printf.sprintf "%s - l%dc%d:l%dc%d" fn l1 c1 l2 c2)
+	>:: (mktest fn (l1,c1) (l2,c2) expected)
+
+let mapper_suite = "ofactor search_mapper" >:::
+	[	mktest "test/parsing.ml" (6,11) (6,16) []
+	; mktest "test/parsing.ml" (9,2)  (9,11) []
+	; mktest "test/parsing.ml" (13,1) (15,44) []
+	; mktest "test/parsing.ml" (15,5) (15,44) []
+	; mktest "test/parsing.ml" (15,5) (15,22) [] ]
+
+let _ =
+	run_test_tt_main fv_suite |> ignore ;
+	run_test_tt_main mapper_suite |> ignore
