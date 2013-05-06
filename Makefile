@@ -25,7 +25,7 @@ test: dist/build/ofactor/ofactor.d.byte
 	ocamlrun -b $^
 
 debug: dist/build/ofactor/ofactor.d.byte
-	$(OCAMLDEBUG) -I $(COMPILER_LIBS) $^
+	$(OCAMLDEBUG) -I $(COMPILER_LIBS) -I dist/build/ofactor/ $^
 
 clean:
 	obuild clean
