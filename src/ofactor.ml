@@ -129,71 +129,126 @@ and fv_me s = [] (* TODO: implement *)
 
 let fv_exp e = fv_exp e |> uniq ~cmp:cmp_lident
 
+let choose_one_patt_exp pos pes =
+	let pe = List.filter
+		(fun (_,e) ->
+			pos_in_loc pos e.pexp_loc)
+		pes in
+	let pe = match pe with
+		| [pe] -> pe
+		| _ -> failwith "choose_one_patt_exp: range does not specify an expression"
+	in pe
+
+and choose_one_case pos cs =
+	let is_in_guard c = match c.pc_guard with
+		| None -> false
+		| Some e -> pos_in_loc pos e.pexp_loc in
+	let c = List.filter
+		(fun c ->
+			is_in_guard c || pos_in_loc pos c.pc_rhs.pexp_loc)
+		cs in
+	let c = match c with
+		| [c] -> c
+		| _ -> failwith "choose_one_case: range does not specify an expression"
+	in if is_in_guard c then `guard c else `rhs c
+
+and choose_one_exp pos es =
+	let es = List.filter (pos_in_exp pos) es in
+	let e = match es with
+		| [e] -> e
+		| _ -> failwith "choose_one_exp: range does not specify an expression"
+	in e
+
 (* TODO: bound variables. Eventually, we'll need to know the variables
 	 bound in the scope _between_: (1) the level to which we're
 	 extracting the new function, and (2), the level at which the
 	 expression we're extracting has been defined. *)
-let rec bv_str s e acc = match s.pstr_desc with
-	| Pstr_value (Nonrecursive, pes, _) ->
-		acc
-	| Pstr_value (Recursive, _, _) ->
-		failwith "bv: Pstr_value Recursive unimplemented"
-	| _ -> acc
+let rec bv_str str upto bound_vars = match str.pstr_desc with
+	| Pstr_value (rec_flag, pes, _) ->
+		let pos_upto = upto.pexp_loc.Location.loc_start in
+		let _,e = choose_one_patt_exp pos_upto pes in
+		let bvars = match rec_flag with
+			| Recursive    -> flatmap pevars pes
+			| Nonrecursive -> [] in
+		bv_exp e upto (bvars @ bound_vars)
+	| _ -> bound_vars
 
-and bv_exp es e_stop acc =
-	match es with
-	| [] -> []
-	| e::es ->
-		(* TODO: Only return acc if we've reached the expression we're
-			 targetting. Otherwise, we might have run down a branch which we
-			 don't care about. Consider looking for the variables bound at a
-			 particular match case expression: we would only want the variables
-			 bound up to that point, and not those bound on other branches. *)
-		if e = e_stop then acc else
-			match e.pexp_desc with
-			(* Terminal cases *)
-			| Pexp_ident _
-			| Pexp_constant _
-			| Pexp_new _
+and bv_exp e upto bound_vars =
+	(* TODO: Only return bound_vars if we've reached the expression
+		 we're targetting. Otherwise, we might have run down a branch
+		 which we don't care about. Consider looking for the variables
+		 bound at a particular match case expression: we would only want
+		 the variables bound up to that point, and not those bound on
+		 other branches. *)
+	let pos_upto = upto.pexp_loc.Location.loc_start in
+	if e = upto then bound_vars else
+		match e.pexp_desc with
 
-			(* Recursing cases *)
-			(* |  *)
+		(* Terminal cases *)
 
-			(* Binding cases *)
-			| Pexp_let _ -> bv_exp es e_stop acc
-			| Pexp_function _ -> bv_exp es e_stop acc
+		| Pexp_ident _
+		| Pexp_constant _
+		| Pexp_new _ ->
+			bound_vars
 
-			(* TODO: other cases *)
-			| Pexp_fun (_, _, _, _)
-			| Pexp_apply (_, _)
-			| Pexp_match (_, _)
-			| Pexp_try (_, _)
-			| Pexp_tuple _
-			| Pexp_construct (_, _)
-			| Pexp_variant (_, _)
-			| Pexp_record (_, _)
-			| Pexp_field (_, _)
-			| Pexp_setfield (_, _, _)
-			| Pexp_array _
-			| Pexp_ifthenelse (_, _, _)
-			| Pexp_sequence (_, _)
-			| Pexp_while (_, _)
-			| Pexp_for (_, _, _, _, _)
-			| Pexp_constraint (_, _)
-			| Pexp_coerce (_, _, _)
-			| Pexp_send (_, _)
-			| Pexp_setinstvar (_, _)
-			| Pexp_override _
-			| Pexp_letmodule (_, _, _)
-			| Pexp_assert _
-			| Pexp_lazy _
-			| Pexp_poly (_, _)
-			| Pexp_object _
-			| Pexp_newtype (_, _)
-			| Pexp_pack _
-			| Pexp_open (_, _)
-			| Pexp_extension _ ->
-				failwith "bv_exp unimplemented case"
+		(* Binding cases *)
+
+		| Pexp_fun (l, le, p, e) ->
+			(* XXX Check the label case... *)
+			let l = match le with
+				| None -> if l = "" then [] else [ mkvar l ]
+				| Some _ -> [mkvar (String.sub l 1 (String.length l - 1)) ] in
+			bv_exp e upto (pvars p @ l @ bound_vars)
+
+		| Pexp_let (rec_flag, pes, e) ->
+			let _,e = choose_one_patt_exp pos_upto pes in
+			let bvars = match rec_flag with
+				| Recursive -> flatmap pevars pes
+				| Nonrecursive -> [] in
+			bv_exp e upto (bvars @ bound_vars)
+
+		| Pexp_function cs ->
+			(match choose_one_case pos_upto cs with
+			| `guard c -> bv_exp (opt c.pc_guard) upto (bound_vars)
+			| `rhs c -> bv_exp c.pc_rhs upto (bound_vars))
+
+		(* Non-binding cases *)
+
+		| Pexp_apply (e, les) ->
+			let es = e :: mapsnd les in
+			let e = choose_one_exp pos_upto es in
+			bv_exp e upto bound_vars
+
+		(* TODO: other cases *)
+
+		| Pexp_match (_, _)
+		| Pexp_try (_, _)
+		| Pexp_tuple _
+		| Pexp_construct (_, _)
+		| Pexp_variant (_, _)
+		| Pexp_record (_, _)
+		| Pexp_field (_, _)
+		| Pexp_setfield (_, _, _)
+		| Pexp_array _
+		| Pexp_ifthenelse (_, _, _)
+		| Pexp_sequence (_, _)
+		| Pexp_while (_, _)
+		| Pexp_for (_, _, _, _, _)
+		| Pexp_constraint (_, _)
+		| Pexp_coerce (_, _, _)
+		| Pexp_send (_, _)
+		| Pexp_setinstvar (_, _)
+		| Pexp_override _
+		| Pexp_letmodule (_, _, _)
+		| Pexp_assert _
+		| Pexp_lazy _
+		| Pexp_poly (_, _)
+		| Pexp_object _
+		| Pexp_newtype (_, _)
+		| Pexp_pack _
+		| Pexp_open (_, _)
+		| Pexp_extension _ ->
+			failwith "bv_exp: unimplemented case"
 
 (* let bv_str s e = bv_str s e [] |> uniq ~cmp:cmp_lident *)
 
@@ -215,13 +270,15 @@ object(this)
 	method get_str = str
 
 	method get_free_vars =
-		match exp with
-		| None -> []
-		| Some e ->
-			let fvs = fv_exp e in
+		match str, exp with
+		| None, _
+		| _, None -> []
+		| Some s, Some e ->
+			let fvs = fv_exp e
+			and bvs = bv_str s e [] in
 			Printf.printf "\n  bound vars: %s\n"
-				(string_of_idents bound_vars) ;
-			intersect fvs bound_vars
+				(string_of_idents bvs) ;
+			intersect fvs bvs
 
 	method! expr e =
 		let e = super # expr e in
@@ -250,7 +307,8 @@ object(this)
 				pes in
 			let pe = match pe with
 			| [pe] -> pe
-			| _ -> failwith "range does not specify an expression" in
+			| _ ->
+				failwith "search_mapper#structure_item: range does not specify an expression" in
 			let bvars = match rec_flag with
 				| Recursive    -> flatmap pevars pes
 				| Nonrecursive -> [] in
@@ -291,13 +349,13 @@ let ast_of_file fn =
 	|> Lexing.from_channel
 	|> Parse.implementation
 
-let _ =
-	let pos1 = mkpos 6 11 in
-	let pos2 = mkpos 6 16 in
-	let m = search_mapper(pos1, pos2) in
-	Printf.printf "running search_mapper on %s:%s\n"
-		(string_of_pos pos1) (string_of_pos pos2) ;
-	let ast = ast_of_file "test/parsing.ml" in
+let do_test fn (l1,c1) (l2,c2) =
+	let p1 = mkpos l1 c1
+	and p2 = mkpos l2 c2 in
+	let m = search_mapper(p1, p2) in
+	Printf.printf "\nrunning search_mapper on %s:%s\n"
+		(string_of_pos p1) (string_of_pos p2) ;
+	let ast = ast_of_file fn in
 	m # implementation "" ast |> ignore ;
 	match m # get_exp with
 	| None -> print_endline "  FAILED to retrieve expression"
@@ -306,6 +364,12 @@ let _ =
 			(string_of_loc e.pexp_loc) ;
 		let fvs = m # get_free_vars in
 		Printf.printf "  free vars /\\ bound vars: %s\n" (string_of_idents fvs)
+
+let _ =
+	do_test "test/parsing.ml" (6,11) (6,16) ;
+	do_test "test/parsing.ml" (13,1) (15,44) ;
+	do_test "test/parsing.ml" (15,5) (15,44) ;
+	do_test "test/parsing.ml" (15,5) (15,22) ;
 
 open OUnit
 
