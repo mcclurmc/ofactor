@@ -4,111 +4,15 @@ open Parsetree
 
 open Ast_mapper
 
-external (|>) : 'a -> ('a -> 'b) -> 'b = "%revapply"
+open Helpers
 
-(* main driver needs to use commandliner to get source file name and
+(* main driver should use commandliner to get source file name and
 	 args. Args are a range of locations. Locations should be in format:
 	 <l>:<c> or <char> *)
 
 let main = ()
 
-(* given a source file, and a location, can we find the AST node that
-	 occurs nearest to, but not after, this location? *)
-
-let string_of_pos (pos : Lexing.position) =
-	Printf.sprintf "l%dc%d"
-		pos.Lexing.pos_lnum
-		(pos.Lexing.pos_cnum - pos.Lexing.pos_bol)
-
-let string_of_loc loc =
-	Printf.sprintf "%s:%s"
-		(string_of_pos loc.Location.loc_start)
-		(string_of_pos loc.Location.loc_end)
-
-let print_loc loc =
-	print_endline (string_of_loc loc)
-
-let fix_pos_offset p =
-	let open Lexing in
-	if p.pos_bol = -1
-	then p
-	else { p with
-		pos_cnum = p.pos_cnum - p.pos_bol;
-		pos_bol = -1 }
-
-let cmp_pos p1 p2 =
-	let open Lexing in
-
-	let p1 = fix_pos_offset p1
-	and p2 = fix_pos_offset p2 in
-
-	let c1 = compare p1.pos_lnum p2.pos_lnum
-	and c2 = compare p1.pos_cnum p2.pos_cnum in
-
-	if c1 = 0 then c2 else c1
-
-(* let pos_in_loc p l = *)
-(* 	let open Lexing in *)
-(* 	let open Location in *)
-
-(* 	let l1 = l.loc_start *)
-(* 	and l2 = l.loc_end in *)
-
-(* 	(p.pos_lnum >= l1.pos_lnum && p.pos_lnum <= l2.pos_lnum) *)
-(* 	&& *)
-(* 		(p.pos_cnum >= (l1.pos_cnum - l1.pos_bol) *)
-(* 		 && p.pos_cnum <= (l2.pos_cnum - l2.pos_bol)) *)
-
-let pos_in_loc p l =
-	let open Lexing in
-	let open Location in
-
-	let l1 = l.loc_start
-	and l2 = l.loc_end in
-
-	(* A position is "within" a location if it is "greater than or
-		 equal" the location's starting postion, and "less than or equal
-		 to" the location's ending position. *)
-	(cmp_pos p l1 >= 0) && (cmp_pos p l2 <= 0)
-
-let range_in_loc p1 p2 l =
-	(pos_in_loc p1 l) && (pos_in_loc p2 l)
-
-let cmp_lident a b = Longident.(compare (last a) (last b))
-
-let mem x xs =
-	let rec loop = function
-		| [] -> false
-		| y::ys -> if (cmp_lident x y) = 0
-			then true
-			else loop ys in
-	loop xs
-
-let diff a b = List.filter (fun a -> not (mem a b)) a
-let (//) a b = diff a b
-
-let intersect l1 l2 = List.(filter (fun a -> mem a l2) l1)
-
-let flatmap f l = List.(flatten (map f l))
-
-let mapfst ls = List.map fst ls
-let mapsnd ls = List.map snd ls
-
-let optmap f = function
-	| None -> []
-	| Some a -> f a
-
-let uniq ?(cmp=compare) ls =
-	List.(fold_left
-		begin
-			fun acc item -> match acc with
-			| [] -> [item]
-			| first :: rest when first = item -> acc
-			| _ -> item :: acc
-		end
-		[] (sort cmp ls))
-
-let mkvar s = Longident.Lident s
+(** Free and bound variables *)
 
 (* TODO: unit tests *)
 let rec pvars p = match p.ppat_desc with
@@ -145,7 +49,7 @@ let rec pvars p = match p.ppat_desc with
 
 	| Ppat_record (ps, _) -> flatmap pvars (mapsnd ps)
 
-let pevars (p,_) = pvars p
+and pevars (p,_) = pvars p
 
 let rec fv_exp e =
 	match e.pexp_desc with
@@ -191,7 +95,7 @@ let rec fv_exp e =
 
 	| Pexp_override es -> flatmap fv_exp (mapsnd es) (* ??? *)
 
-	| Pexp_letmodule (_, m, e) -> (fv_exp e) @ (fv_mod m)
+	| Pexp_letmodule (_, me, e) -> (fv_exp e) @ (fv_me me)
 
 	(* Binding cases *)
 	| Pexp_match (e, cs)
@@ -221,12 +125,79 @@ and fv_pat (p,e) = (fv_exp e) // (pvars p)
 
 and fv_case c = ((optmap fv_exp c.pc_guard) @ (fv_exp c.pc_rhs)) // (pvars c.pc_lhs)
 
-and fv_mod s = failwith "fv_mod unimplemented" (* TODO: implement *)
+and fv_me s = [] (* TODO: implement *)
 
 let fv_exp e = fv_exp e |> uniq ~cmp:cmp_lident
 
-let string_of_idents fvs =
-	List.map Longident.last fvs |> String.concat ", "
+(* TODO: bound variables. Eventually, we'll need to know the variables
+	 bound in the scope _between_: (1) the level to which we're
+	 extracting the new function, and (2), the level at which the
+	 expression we're extracting has been defined. *)
+let rec bv_str s e acc = match s.pstr_desc with
+	| Pstr_value (Nonrecursive, pes, _) ->
+		acc
+	| Pstr_value (Recursive, _, _) ->
+		failwith "bv: Pstr_value Recursive unimplemented"
+	| _ -> acc
+
+and bv_exp es e_stop acc =
+	match es with
+	| [] -> []
+	| e::es ->
+		(* TODO: Only return acc if we've reached the expression we're
+			 targetting. Otherwise, we might have run down a branch which we
+			 don't care about. Consider looking for the variables bound at a
+			 particular match case expression: we would only want the variables
+			 bound up to that point, and not those bound on other branches. *)
+		if e = e_stop then acc else
+			match e.pexp_desc with
+			(* Terminal cases *)
+			| Pexp_ident _
+			| Pexp_constant _
+			| Pexp_new _
+
+			(* Recursing cases *)
+			(* |  *)
+
+			(* Binding cases *)
+			| Pexp_let _ -> bv_exp es e_stop acc
+			| Pexp_function _ -> bv_exp es e_stop acc
+
+			(* TODO: other cases *)
+			| Pexp_fun (_, _, _, _)
+			| Pexp_apply (_, _)
+			| Pexp_match (_, _)
+			| Pexp_try (_, _)
+			| Pexp_tuple _
+			| Pexp_construct (_, _)
+			| Pexp_variant (_, _)
+			| Pexp_record (_, _)
+			| Pexp_field (_, _)
+			| Pexp_setfield (_, _, _)
+			| Pexp_array _
+			| Pexp_ifthenelse (_, _, _)
+			| Pexp_sequence (_, _)
+			| Pexp_while (_, _)
+			| Pexp_for (_, _, _, _, _)
+			| Pexp_constraint (_, _)
+			| Pexp_coerce (_, _, _)
+			| Pexp_send (_, _)
+			| Pexp_setinstvar (_, _)
+			| Pexp_override _
+			| Pexp_letmodule (_, _, _)
+			| Pexp_assert _
+			| Pexp_lazy _
+			| Pexp_poly (_, _)
+			| Pexp_object _
+			| Pexp_newtype (_, _)
+			| Pexp_pack _
+			| Pexp_open (_, _)
+			| Pexp_extension _ ->
+				failwith "bv_exp unimplemented case"
+
+(* let bv_str s e = bv_str s e [] |> uniq ~cmp:cmp_lident *)
+
+(** AST searching *)
 
 let search_mapper(pos1, pos2) =
 object(this)
@@ -300,88 +271,25 @@ object(this)
 		| [si] -> super # structure [si]
 		| _ -> failwith "range bounds multiple structure items!"
 
-	(* TODO: bound variables. Eventually, we'll need to know the variables
-		 bound in the scope _between_: (1) the level to which we're
-		 extracting the new function, and (2), the level at which the
-		 expression we're extracting has been defined. *)
-	(* let rec bv s e acc = match s.pstr_desc with *)
-	(* method bv_str s e acc = match s.pstr_desc with *)
-	(* 	| Pstr_value (Nonrecursive, pes, _) -> *)
-	(* 		acc *)
-	(* 	| Pstr_value (Recursive, _, _) -> *)
-	(* 		failwith "bv: Pstr_value Recursive unimplemented" *)
-	(* 	| _ -> acc *)
-
-	(* method bv_exp es e_stop acc = *)
-	(* 	match es with *)
-	(* 	| [] -> [] *)
-	(* 	| e::es -> *)
-	(* 		(\* TODO: Only return acc if we've reached the expression we're *)
-	(* 			 targetting. Otherwise, we might have run down a branch which we *)
-	(* 			 don't care about. Consider looking for the variables bound at a *)
-	(* 			 particular match case expression: we would only want the variables *)
-	(* 			 bound up to that point, and not those bound on other branches. *\) *)
-	(* 		if e = e_stop then acc else *)
-	(* 			match e.pexp_desc with *)
-	(* 			(\* Terminal cases *\) *)
-	(* 			| Pexp_ident _ *)
-	(* 			| Pexp_constant _ *)
-	(* 			| Pexp_new _ *)
-
-	(* 			(\* Recursing cases *\) *)
-	(* 			(\* |  *\) *)
-
-	(* 			(\* Binding cases *\) *)
-	(* 			| Pexp_let _ -> this # bv_exp es e_stop acc *)
-	(* 			| Pexp_function _ -> this # bv_exp es e_stop acc *)
-
-	(* 			(\* TODO: other cases *\) *)
-	(* 			| Pexp_fun (_, _, _, _) *)
-	(* 			| Pexp_apply (_, _) *)
-	(* 			| Pexp_match (_, _) *)
-	(* 			| Pexp_try (_, _) *)
-	(* 			| Pexp_tuple _ *)
-	(* 			| Pexp_construct (_, _) *)
-	(* 			| Pexp_variant (_, _) *)
-	(* 			| Pexp_record (_, _) *)
-	(* 			| Pexp_field (_, _) *)
-	(* 			| Pexp_setfield (_, _, _) *)
-	(* 			| Pexp_array _ *)
-	(* 			| Pexp_ifthenelse (_, _, _) *)
-	(* 			| Pexp_sequence (_, _) *)
-	(* 			| Pexp_while (_, _) *)
-	(* 			| Pexp_for (_, _, _, _, _) *)
-	(* 			| Pexp_constraint (_, _) *)
-	(* 			| Pexp_coerce (_, _, _) *)
-	(* 			| Pexp_send (_, _) *)
-	(* 			| Pexp_setinstvar (_, _) *)
-	(* 			| Pexp_override _ *)
-	(* 			| Pexp_letmodule (_, _, _) *)
-	(* 			| Pexp_assert _ *)
-	(* 			| Pexp_lazy _ *)
-	(* 			| Pexp_poly (_, _) *)
-	(* 			| Pexp_object _ *)
-	(* 			| Pexp_newtype (_, _) *)
-	(* 			| Pexp_pack _ *)
-	(* 			| Pexp_open (_, _) *)
-	(* 			| Pexp_extension _ -> *)
-	(* 				failwith "bv_exp unfinished cases" *)
-
-	(* let bv s e = bv s e [] |> uniq ~cmp:cmp_lident *)
-
 end
+
+(** Tests *)
+
+let unwrap_str_eval = function
+	| { pstr_desc = Pstr_eval (e,_)
+		; pstr_loc = _ } -> e
+	| _ -> failwith "unwrap_str_eval"
+
+let parse_string s = s
+	|> Lexing.from_string
+	|> Parse.implementation
+	|> List.hd
+	|> unwrap_str_eval
 
 let ast_of_file fn =
 	open_in fn
 	|> Lexing.from_channel
 	|> Parse.implementation
-
-let mkpos l ?(b=(-1)) c =
-	let open Lexing in
-	{ pos_fname = "dummy"
-	; pos_lnum = l
-	; pos_bol = b
-	; pos_cnum = c }
 
 let _ =
 	let pos1 = mkpos 6 11 in
@@ -397,24 +305,7 @@ let _ =
 		Printf.printf "retrieved expression at: %s"
 			(string_of_loc e.pexp_loc) ;
 		let fvs = m # get_free_vars in
-		Printf.printf "  free vars U bound vars: %s\n" (string_of_idents fvs)
-
-(* Tests *)
-
-let unwrap_str_eval = function
-	| { pstr_desc = Pstr_eval (e,_)
-		; pstr_loc = _ } -> e
-	| _ -> failwith "unwrap_str_eval"
-
-let parse_string s = s
-	|> Lexing.from_string
-	|> Parse.implementation
-	|> List.hd
-	|> unwrap_str_eval
-
-let print_idents is =
-	let is = List.map Longident.last is in
-	print_endline (String.concat ", " is)
+		Printf.printf "  free vars /\\ bound vars: %s\n" (string_of_idents fvs)
 
 open OUnit
 
@@ -428,14 +319,14 @@ end
 module SetVar = OUnitDiff.SetMake(EVar)
 module ListVar = OUnitDiff.ListSimpleMake(EVar)
 
-let debug = ref false
+let verbose = ref false
 
 let mktest s vs () =
 	let p = parse_string s in
 	let fvs = fv_exp p in
 	let vs = List.map mkvar vs in
 
-	if !debug then
+	if !verbose then
 		(Printf.printf "\n[%s] len: %d, free vars: %s - Pass? " s
 			 (List.length fvs)
 			 (string_of_idents fvs));
