@@ -1,20 +1,24 @@
 
 (** Helper functions *)
 
+open Lexing
+open Location
+open Longident
+open Parsetree
+
 external (|>) : 'a -> ('a -> 'b) -> 'b = "%revapply"
 
-let string_of_pos (pos : Lexing.position) =
+let string_of_pos pos =
 	Printf.sprintf "l%dc%d"
-		pos.Lexing.pos_lnum
-		(pos.Lexing.pos_cnum - pos.Lexing.pos_bol)
+		pos.pos_lnum
+		(pos.pos_cnum - pos.pos_bol)
 
 let string_of_loc loc =
 	Printf.sprintf "%s:%s"
-		(string_of_pos loc.Location.loc_start)
-		(string_of_pos loc.Location.loc_end)
+		(string_of_pos loc.loc_start)
+		(string_of_pos loc.loc_end)
 
 let fix_pos_offset p =
-	let open Lexing in
 	if p.pos_bol = -1
 	then p
 	else { p with
@@ -22,8 +26,6 @@ let fix_pos_offset p =
 		pos_bol = -1 }
 
 let cmp_pos p1 p2 =
-	let open Lexing in
-
 	let p1 = fix_pos_offset p1
 	and p2 = fix_pos_offset p2 in
 
@@ -33,21 +35,19 @@ let cmp_pos p1 p2 =
 	if c1 = 0 then c2 else c1
 
 let pos_in_loc p l =
-	let open Lexing in
-	let open Location in
-
 	let l1 = l.loc_start
-	and l2 = l.loc_end in
-
-	(cmp_pos p l1 >= 0) && (cmp_pos p l2 <= 0)
+	and l2 = l.loc_end
+	in (cmp_pos p l1 >= 0) && (cmp_pos p l2 <= 0)
 
 let range_in_loc p1 p2 l =
 	(pos_in_loc p1 l) && (pos_in_loc p2 l)
 
-let cmp_lident a b = Longident.(compare (last a) (last b))
+let pos_in_exp p e = pos_in_loc p e.pexp_loc
+
+let cmp_lident a b = compare (last a) (last b)
 
 let string_of_idents fvs =
-	List.map Longident.last fvs |> String.concat ", "
+	List.map last fvs |> String.concat ", "
 
 let mem x xs =
 	let rec loop = function
@@ -71,6 +71,10 @@ let optmap f = function
 	| None -> []
 	| Some a -> f a
 
+let opt = function
+	| None -> failwith "opt: None"
+	| Some a -> a
+
 let uniq ?(cmp=compare) ls =
 	List.(fold_left
 		begin
@@ -88,4 +92,4 @@ let mkpos l ?(b=(-1)) c =
 	; pos_bol = b
 	; pos_cnum = c }
 
-let mkvar s = Longident.Lident s
+let mkvar s = Lident s
