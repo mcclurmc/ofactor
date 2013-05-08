@@ -258,8 +258,8 @@ object(this)
 		| Some s, Some e ->
 			let fvs = fv_exp e
 			and bvs = bv_str s e [] in
-			Printf.printf "\n  bound vars: %s\n"
-				(string_of_idents bvs) ;
+			(* Printf.printf "\n  bound vars: %s\n" *)
+			(* 	(string_of_idents bvs) ; *)
 			intersect fvs bvs
 
 	method! expr e =
@@ -269,18 +269,18 @@ object(this)
 		else if range_in_loc pos1 pos2 e.pexp_loc
 		then begin
 			printer # expression fmt e ;
-			Printf.printf "found an expression at %s:\n  [%s]\n"
-				(string_of_loc e.pexp_loc) (Format.flush_str_formatter ()) ;
+			(* Printf.printf "found an expression at %s:\n  [%s]\n" *)
+			(* 	(string_of_loc e.pexp_loc) (Format.flush_str_formatter ()) ; *)
 			exp <- Some e ;
-			let fvs = fv_exp e in
-			Printf.printf "  free vars: %s\n" (string_of_idents fvs) ;
+			(* let fvs = fv_exp e in *)
+			(* Printf.printf "  free vars: %s\n" (string_of_idents fvs) ; *)
 			e
 		end
 		else e
 
 	method! structure_item si =
-		Printf.printf "found a structure item at %s\n"
-			(string_of_loc si.pstr_loc);
+		(* Printf.printf "found a structure item at %s\n" *)
+		(* 	(string_of_loc si.pstr_loc); *)
 		match si.pstr_desc with
 		| Pstr_value (rec_flag, pes, _) ->
 			str <- Some si ;
@@ -347,7 +347,7 @@ let do_test fn (l1,c1) (l2,c2) =
 		let fvs = m # get_free_vars in
 		Printf.printf "  free vars /\\ bound vars: %s\n" (string_of_idents fvs)
 
-let _ =
+let run_parsing_tests () =
 	do_test "test/parsing.ml" (6,11) (6,16) ;
 	do_test "test/parsing.ml" (9,2)  (9,11) ;
 	do_test "test/parsing.ml" (13,1) (15,44) ;
@@ -421,7 +421,7 @@ let mktest fn (l1,c1) (l2,c2) expected () =
 			 (string_of_idents fvs));
 
 	let fvs = SetVar.of_list fvs
-	and expected = SetVar.of_list expected in
+	and expected = SetVar.of_list (List.map mkvar expected) in
 	SetVar.assert_equal expected fvs
 
 let mktest fn (l1,c1) (l2,c2) expected =
@@ -429,11 +429,11 @@ let mktest fn (l1,c1) (l2,c2) expected =
 	>:: (mktest fn (l1,c1) (l2,c2) expected)
 
 let mapper_suite = "ofactor search_mapper" >:::
-	[	mktest "test/parsing.ml" (6,11) (6,16) []
-	; mktest "test/parsing.ml" (9,2)  (9,11) []
-	; mktest "test/parsing.ml" (13,1) (15,44) []
-	; mktest "test/parsing.ml" (15,5) (15,44) []
-	; mktest "test/parsing.ml" (15,5) (15,22) [] ]
+	[ mktest "test/parsing.ml" (6,11) (6,16)  ["a"; "b"; "c"; "d"]
+	; mktest "test/parsing.ml" (9,2)  (9,11)  ["e"; "f"; "b"]
+	; mktest "test/parsing.ml" (13,1) (15,44) ["pos"]
+	; mktest "test/parsing.ml" (15,5) (15,44) ["pos"]
+	; mktest "test/parsing.ml" (15,5) (15,22) ["pos"] ]
 
 let _ =
 	run_test_tt_main fv_suite |> ignore ;
