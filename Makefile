@@ -3,7 +3,9 @@ SRC=src/*.ml
 
 OCAMLDEBUG=ledit ocamldebug
 COMPILER_LIBS=$(shell ocamlfind query compiler-libs)
-OBUILD_CONFIG=--verbose configure --enable-executable-bytecode --enable-executable-debugging
+OBUILD_CONFIG=--verbose configure --enable-executable-bytecode \
+              --enable-executable-debugging --enable-library-debugging \
+              --enable-tests
 #OBUILD_BUILD=--debug+ build
 OBUILD_BUILD=build
 
@@ -21,10 +23,10 @@ dist/setup: ofactor.obuild
 	obuild $(OBUILD_BUILD)
 	cp dist/build/ofactor/*.cmt src/
 
-test: dist/build/ofactor/ofactor.d.byte
+test: dist/build/ofactor/test-ofactor.d.byte
 	ocamlrun -b $^
 
-debug: dist/build/ofactor/ofactor.d.byte
+debug: dist/build/ofactor/test-ofactor.d.byte
 	$(OCAMLDEBUG) -I $(COMPILER_LIBS) -I dist/build/ofactor/ $^
 
 clean:
