@@ -309,6 +309,11 @@ end
 
 (** Build new function *)
 
+let ast_of_file fn =
+	open_in fn
+	|> Lexing.from_channel
+	|> Parse.implementation
+
 let make_str_value name vars exp =
 	let open Ast_helper in
 	let open Convenience in
@@ -319,3 +324,28 @@ let make_str_value name vars exp =
 
 	(* Ignore location for now... may be important later. *)
 	Str.value Nonrecursive [fun_name, fun_exp]
+
+let extract ((l1,c1),(l2,c2)) name file =
+  let ast = ast_of_file file in
+	let range = mkpos l1 c1, mkpos l2 c2 in
+	let m = search_mapper range in
+
+	m # implementation "" ast |> ignore ;
+
+	match m # get_exp, m # get_str with
+	| Some e, Some s ->
+		let free = m # get_free_vars in
+		let fun_ = make_str_value name free e in
+
+		let fun_string =
+			let p = Pprintast.default
+			and f = Format.str_formatter in
+			p # structure_item f fun_ ;
+			Format.flush_str_formatter ()
+		in
+
+		let pos_string = string_of_pos s.pstr_loc.loc_start in
+
+		(pos_string, fun_string)
+
+	| _ -> failwith "Ofactor.extract"

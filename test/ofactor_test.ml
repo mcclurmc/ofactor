@@ -18,11 +18,6 @@ let parse_string s = s
 	|> List.hd
 	|> unwrap_str_eval
 
-let ast_of_file fn =
-	open_in fn
-	|> Lexing.from_channel
-	|> Parse.implementation
-
 let do_test fn (l1,c1) (l2,c2) =
 	let p1 = mkpos l1 c1
 	and p2 = mkpos l2 c2 in
