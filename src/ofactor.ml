@@ -150,10 +150,10 @@ let rec bv_str str upto bound_vars = match str.pstr_desc with
 	| Pstr_value (rec_flag, pes, _) ->
 		let pos_upto = upto.pexp_loc.Location.loc_start in
 		let e = choose_one_exp pos_upto (mapsnd pes) in
-			let bvars = match rec_flag with
-				| Recursive    -> flatmap pevars pes
-				| Nonrecursive -> [] in
-			bv_exp e upto (bvars @ bound_vars)
+		let bvars = match rec_flag with
+			| Recursive    -> flatmap pevars pes
+			| Nonrecursive -> [] in
+		bv_exp e upto (bvars @ bound_vars)
 	| _ -> bound_vars
 
 and bv_exp e upto bound_vars =
@@ -178,12 +178,13 @@ and bv_exp e upto bound_vars =
 			bv_exp e upto (pvars p @ l @ bound_vars)
 
 		| Pexp_let (rec_flag, pes, e) ->
-			let bvars = match rec_flag with
-				| Recursive -> flatmap pevars pes
-				| Nonrecursive -> [] in
-			let es = e :: mapsnd pes in
-			let e = choose_one_exp pos_upto es in
-				bv_exp e upto (bvars @ bound_vars)
+			let pvars = flatmap pevars pes in
+			if pos_in_exp pos_upto e
+			then bv_exp e upto (pvars @ bound_vars)
+			else
+				let e = choose_one_exp pos_upto (mapsnd pes)
+				and pvars = if rec_flag = Nonrecursive then [] else pvars
+				in bv_exp e upto (pvars @ bound_vars)
 
 		| Pexp_function cs ->
 			(match choose_one_case pos_upto cs with
@@ -344,7 +345,7 @@ let extract ((l1,c1),(l2,c2)) name file =
 			Format.flush_str_formatter ()
 		in
 
-		let pos_string = string_of_pos s.pstr_loc.loc_start in
+		let pos_string = string_of_pos s.pstr_loc.Location.loc_start in
 
 		(pos_string, fun_string)
 

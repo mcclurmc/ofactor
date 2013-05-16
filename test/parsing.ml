@@ -1,4 +1,4 @@
-(* Test cases to be parsed by ofactor *)
+(* BRITTLE, EDIT CAREFULLY! Test cases to be parsed by Ofactor_test. *)
 
 let f a b =
   let g c d =
