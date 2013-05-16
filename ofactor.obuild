@@ -12,6 +12,7 @@ executable ofactor
   main: main.ml
   src-dir: src
   build-deps: compiler-libs.optcomp, compiler-libs.bytecomp, oUnit, cmdliner, re.str
+#  build-deps: oUnit, cmdliner, re.str, ofactor
 
 test ofactor
   main-is: ofactor_test.ml
