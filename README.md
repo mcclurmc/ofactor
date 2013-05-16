@@ -16,12 +16,26 @@ Perhaps we'd like to factor out the expression "(arg1 * 4) + arg2" to
 its own function, to separate side effects from calculation. We could
 call ofactor:
 
-    ofactor extract -r l2c?:l2:c? -n calculate thecode.ml
+    ofactor extract -r l2c10:l2:c27 -n calculate thecode.ml
 
 Which would return:
 
     l1c0
     let calculate arg1 arg2 = (arg1 * 4) + arg2
+
+The first line is the position where the new function should be
+inserted into the original file, and the second line starts the new
+function that we've created.
+
+### How does it work?
+
+Function extraction works by locating the expression given by the
+range (-r) argument, and calculating the free variables of that
+expression. The free variables are then compared against the variables
+which were bound in the structure item that contains that expression;
+the new function's parameters are then the intersection of the
+expression's free variables, and the variables bound in the structure
+item leading up to that expression.
 
 Build Requirements
 ------------------
