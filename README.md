@@ -55,7 +55,8 @@ chosen as a target because I wanted to follow along with the new
 camlp4-alternative development, and because it contained a parse tree
 mapper class which was convenient to use. Unfortunately, the parse
 tree in this compiler version is incompatible with previous versions
-of OCaml.
+of OCaml, meaning that ofactor will not work with mainline OCaml until
+the extension-points branch gets merged back into trunk.
 
 ### The requirements
 
